@@ -1,34 +1,28 @@
+#include <stdint.h>
 #include <stdlib.h>
 #include <sys/epoll.h>
-#include <string.h>
 #include <arpa/inet.h>
-#include <sys/socket.h>
 #include <netinet/in.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #include <errno.h>
 #include "server.h"
 #include "common.h"
 #include "packet.h"
 
-static int create_listen(unsigned port, struct server *svr)
+static int create_listen(unsigned port)
 {
-	struct sockaddr_in addr;
-
-	memset(&addr, 0, sizeof addr);
+	int sockfd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+	if (sockfd == -1)
+		die("socket");
+	
+	struct sockaddr_in addr = {0};
 	addr.sin_family = AF_INET;
-	addr.sin_addr.s_addr = INADDR_ANY;
+	addr.sin_addr.s_addr = htonl(INADDR_ANY);
 	addr.sin_port = htons(port);
 
-	int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-	if (sockfd == -1) {
-		free(svr);
-		die("socket");
-	}
-
-	set_nonblocking(sockfd);
-
-	if (bind(sockfd, (struct sockaddr*) &addr, sizeof(struct sockaddr)) == -1) {
-		free(svr);
+	if (bind(sockfd, (struct sockaddr *)&addr, sizeof addr) == -1) {
+		close(sockfd);
 		die("bind");
 	}
 	return sockfd;
@@ -36,10 +30,7 @@ static int create_listen(unsigned port, struct server *svr)
 
 struct server *server_init(unsigned port)
 {
-	struct server *svr = NULL;
-	struct epoll_event ev;
-
-	svr = calloc(1, sizeof(struct server));
+	struct server *svr = calloc(1, sizeof *svr);
 	if (svr == NULL)
 		die("calloc");
 
@@ -49,27 +40,33 @@ struct server *server_init(unsigned port)
 		die("epoll_create1");
 	}
 
-	svr->listen = create_listen(port, svr);
+	svr->listen = create_listen(port);
 
+	struct epoll_event ev = {0};
 	ev.events = EPOLLIN;
 	ev.data.fd = svr->listen;
 
 	if (epoll_ctl(svr->epfd, EPOLL_CTL_ADD, svr->listen, &ev) == -1) {
+		close(svr->listen);
+		close(svr->epfd);
 		free(svr);
 		die("epoll_ctl");
 	}
 	return svr;
 }
 
-static void parse_message(char buf[])
+static void parse_message(const uint8_t *buf, size_t len,
+			const struct sockaddr *client, socklen_t client_len)
 {
-	uint8_t packet_type = buf[0];
-	switch (packet_type) {
+	switch (buf[0]) {
 	case PKT_START:
+		handle_start((const struct pkt_start *)buf, len, client, client_len);
 		break;
 	case PKT_PAYLOAD:
+		handle_payload((const struct pkt_payload *)buf, len, client, client_len);
 		break;
 	case PKT_DONE:
+		handle_done((const struct pkt_done *)buf, len, client, client_len);
 		break;
 	default:
 		break;
@@ -78,16 +75,26 @@ static void parse_message(char buf[])
 
 static void server_handle(struct server *svr)
 {
-	char buf[TWO_KB] = {0};
-	struct sockaddr_storage addr;
-	socklen_t addr_len = sizeof(struct sockaddr);
+	for (;;) {
+		uint8_t buf[TWO_KB];
+		struct sockaddr_storage client;
+		socklen_t client_len = sizeof(client);
 
-	ssize_t len = recvfrom(svr->listen, buf, sizeof buf, 0, (struct sockaddr*) &addr, &addr_len);
-	if (len == -1 && errno != EAGAIN && errno != EWOULDBLOCK)
-		die("recvfrom");
+		ssize_t len = recvfrom(svr->listen, buf, sizeof buf, 0, (struct sockaddr *)&client, &client_len);
+		if (len == -1) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK)
+				break;
+				
+			if (errno == EINTR)
+				continue;
+			die("recvfrom");
+		}
+
+		if (len == 0)
+			continue;
 	
-	if (len > 0)
-		parse_message(buf);
+		parse_message(buf, (size_t)len, (struct sockaddr *)&client, client_len);
+	}
 }
 
 void server_start(struct server *svr)
@@ -96,8 +103,11 @@ void server_start(struct server *svr)
 
 	for (;;) {
 		int ready = epoll_wait(svr->epfd, events, MAX_EVENTS, -1);
-		if (ready == -1)
+		if (ready == -1) {
+			if (errno == EINTR)
+				continue;
 			die("epoll_wait");
+		}
 
 		if (ready == 0)
 			continue;
@@ -106,14 +116,22 @@ void server_start(struct server *svr)
 			if (events[i].data.fd != svr->listen)
 				continue;
 
-			server_handle(svr);
+			if (events[i].events & EPOLLIN)
+				server_handle(svr);
 		}
 	}
 }
 
 void server_stop(struct server *svr)
 {
-	close(svr->epfd);
+	if (!svr)
+		return;
+	
+	if (svr->listen >= 0)
+		close(svr->listen);
+	
+	if (svr->epfd >= 0)
+		close(svr->epfd);
 	free(svr);
 }
 

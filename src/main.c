@@ -4,30 +4,31 @@
 #include "server.h"
 #include "client.h"
 
-#define NON_PRIVILEGED_PORT 1024u
+#define NON_PRIVILEGED_PORT 9367
 
-static int server_call()
+static int server_call(unsigned port)
 {
-	struct server *svr;
-	svr = server_init(NON_PRIVILEGED_PORT);
+	struct server *svr = server_init(port);
+	if (!svr)
+		return EXIT_FAILURE;
+	
 	server_start(svr);
-	server_stop(svr);
 	return EXIT_SUCCESS;
 }
 
 static int client_call()
 {
-        return 0;
+        return EXIT_SUCCESS;
 }
 
 int main(int argc, char *argv[])
 {
-	if (argc == 2 && strcmp(argv[1], "server") == 0) {
-		server_call();
-	} else if (argc == 3 && strcmp(argv[1], "client") == 0) {
-		client_call();
-	} else {
-		printf("Incorrect usage. Please refer to README.md");
-	}
-	return EXIT_SUCCESS;
+	if (argc == 2 && strcmp(argv[1], "server") == 0)
+		return server_call(NON_PRIVILEGED_PORT);
+
+	if (argc == 3 && strcmp(argv[1], "client") == 0)
+		return client_call();
+	
+	printf("Incorrect usage. Please refer to README.md");
+	return EXIT_FAILURE;
 }
