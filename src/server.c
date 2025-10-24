@@ -10,7 +10,7 @@
 #include "common.h"
 #include "packet.h"
 
-static int create_listen(unsigned port)
+static int create_listen(int port)
 {
 	int sockfd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
 	if (sockfd == -1)
@@ -28,7 +28,20 @@ static int create_listen(unsigned port)
 	return sockfd;
 }
 
-struct server *server_init(unsigned port)
+static void server_stop(struct server *svr)
+{
+	if (!svr)
+		return;
+	
+	if (svr->listen >= 0)
+		close(svr->listen);
+	
+	if (svr->epfd >= 0)
+		close(svr->epfd);
+	free(svr);
+}
+
+struct server *server_init(int port)
 {
 	struct server *svr = calloc(1, sizeof *svr);
 	if (svr == NULL)
@@ -47,9 +60,7 @@ struct server *server_init(unsigned port)
 	ev.data.fd = svr->listen;
 
 	if (epoll_ctl(svr->epfd, EPOLL_CTL_ADD, svr->listen, &ev) == -1) {
-		close(svr->listen);
-		close(svr->epfd);
-		free(svr);
+		server_stop(svr);
 		die("epoll_ctl");
 	}
 	return svr;
@@ -87,6 +98,8 @@ static void server_handle(struct server *svr)
 				
 			if (errno == EINTR)
 				continue;
+
+			server_stop(svr);
 			die("recvfrom");
 		}
 
@@ -106,6 +119,8 @@ void server_start(struct server *svr)
 		if (ready == -1) {
 			if (errno == EINTR)
 				continue;
+			
+			server_stop(svr);
 			die("epoll_wait");
 		}
 
@@ -120,18 +135,5 @@ void server_start(struct server *svr)
 				server_handle(svr);
 		}
 	}
-}
-
-void server_stop(struct server *svr)
-{
-	if (!svr)
-		return;
-	
-	if (svr->listen >= 0)
-		close(svr->listen);
-	
-	if (svr->epfd >= 0)
-		close(svr->epfd);
-	free(svr);
 }
 

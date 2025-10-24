@@ -12,7 +12,6 @@ enum {
 	PKT_ERROR
 };
 
-#pragma pack(push,1)
 struct pkt_start {
 	uint8_t  type;
 	uint8_t  transfer_id[16];
@@ -34,16 +33,10 @@ struct pkt_done {
 	uint8_t transfer_id[16];
 };
 
-struct pkt_ok {
+struct pkt_ack {
 	uint8_t type;
 	uint8_t transfer_id[16];
 };
-
-struct pkt_error {
-	uint8_t type;
-	uint8_t transfer_id[16];
-};
-#pragma pack(pop)
 
 void handle_start(const struct pkt_start *buf, size_t len,
 		const struct sockaddr *client, socklen_t client_len);

@@ -25,6 +25,8 @@ void transfer_update_client(struct transfer_state *t,
 			const struct sockaddr *client, socklen_t client_len);
 bool transfer_write_chunk(struct transfer_state *t, uint64_t offset,
 			const uint8_t *payload, uint16_t payload_len);
-int transfer_complete(struct transfer_state *t);
+int transfer_complete(const struct transfer_state *t);
+void transfer_ack(const struct transfer_state *t, const struct sockaddr *client,
+		socklen_t client_len);
 
 #endif /* _TRANSFER_H */

@@ -9,8 +9,7 @@ struct server {
 	int listen;
 };
 
-struct server *server_init(unsigned port);
+struct server *server_init(int port);
 void server_start(struct server *svr);
-void server_stop(struct server *svr);
 
 #endif /* _SERVER_H */

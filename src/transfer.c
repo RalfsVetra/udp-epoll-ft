@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include "uthash.h"
 #include "transfer.h"
+#include "packet.h"
 
 struct transfer_state *g_tbl = NULL;
 
@@ -76,8 +77,21 @@ bool transfer_write_chunk(struct transfer_state *t, uint64_t offset,
 	return true;
 }
 
-int transfer_complete(struct transfer_state *t)
+int transfer_complete(const struct transfer_state *t)
 {
 	return t && (t->bytes_received == t->total_size);
+}
+
+void transfer_ack(const struct transfer_state *t, const struct sockaddr *client,
+		socklen_t client_len)
+{
+	struct pkt_ack a;
+	a.type = transfer_complete(t) ? PKT_OK : PKT_ERROR;
+	memcpy(a.transfer_id, t->transfer_id, sizeof t->transfer_id);
+
+	const size_t ack_len = sizeof a;
+	ssize_t len = sendto(t->fd, &a, ack_len, 0, client, client_len);
+	if (len == -1 || (size_t)len == ack_len)
+		return;
 }
 

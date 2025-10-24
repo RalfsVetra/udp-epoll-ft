@@ -72,14 +72,8 @@ void handle_done(const struct pkt_done *d, size_t len,
 	if (!t)
 		return;
 
-	if (!transfer_complete(t)) {
-		/* Send PKT_ERROR */
-		transfer_remove(t);
-		return;
-	}
-
+	transfer_ack(t, client, client_len);
 	fsync(t->fd);
-	/* Send PKT_OK */
 	transfer_remove(t);
 }
 
