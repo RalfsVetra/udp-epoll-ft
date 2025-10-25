@@ -1,6 +1,9 @@
 #ifndef _NET_H
 #define _NET_H
 
-int net_create_udp_listener(int port);
+#include <netinet/in.h>
+
+int create_udp_listener(int port);
+void make_loopback_addr(struct sockaddr_in *addr, int port);
 
 #endif /* _NET_H */

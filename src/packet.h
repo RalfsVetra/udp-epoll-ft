@@ -39,9 +39,9 @@ struct pkt_ack {
 };
 
 void handle_start(const struct pkt_start *buf, size_t len,
-		  const struct sockaddr *client, socklen_t client_len);
+				  const struct sockaddr *client, socklen_t client_len);
 void handle_payload(const struct pkt_payload *buf, size_t len,
-		    const struct sockaddr *client, socklen_t client_len);
+					const struct sockaddr *client, socklen_t client_len);
 int handle_done(const struct pkt_done *buf, size_t len);
 
 #endif /* _PACKET_H */

@@ -5,6 +5,6 @@
 
 #include "context.h"
 
-int client_start(struct context *ctx, const char *path);
+int client_start(struct context *ctx, const char *path, int port);
 
 #endif /* _CLIENT_H */
