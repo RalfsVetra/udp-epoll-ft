@@ -1,139 +1,104 @@
 #include <stdint.h>
-#include <stdlib.h>
+#include <sys/types.h>
 #include <sys/epoll.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
 #include <sys/socket.h>
-#include <unistd.h>
 #include <errno.h>
 #include "server.h"
-#include "common.h"
 #include "packet.h"
+#include "context.h"
+#include "transfer.h"
 
-static int create_listen(int port)
+static void send_ack(int sock_fd, const uint8_t transfer_id[16], int done,
+		     const struct sockaddr *client, socklen_t client_len)
 {
-	int sockfd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
-	if (sockfd == -1)
-		die("socket");
+    struct pkt_ack a;
+    a.type = done == 0 ? PKT_OK : PKT_ERROR;
+    memcpy(a.transfer_id, transfer_id, 16);
+
+    (void)sendto(sock_fd, &a, sizeof a, 0, client, client_len);
+}
+
+static void parse_message(struct context *ctx, const uint8_t *buf, size_t len,
+			  const struct sockaddr *client, socklen_t client_len)
+{
+    if (len == 0)
+	return;
 	
-	struct sockaddr_in addr = {0};
-	addr.sin_family = AF_INET;
-	addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	addr.sin_port = htons(port);
-
-	if (bind(sockfd, (struct sockaddr *)&addr, sizeof addr) == -1) {
-		close(sockfd);
-		die("bind");
-	}
-	return sockfd;
-}
-
-static void server_stop(struct server *svr)
-{
-	if (!svr)
-		return;
+    switch (buf[0]) {
+    case PKT_START:
+	handle_start((const struct pkt_start *)buf, len, client, client_len);
+	break;
 	
-	if (svr->listen >= 0)
-		close(svr->listen);
+    case PKT_PAYLOAD:
+	handle_payload((const struct pkt_payload *)buf, len, client, client_len);
+	break;
 	
-	if (svr->epfd >= 0)
-		close(svr->epfd);
-	free(svr);
-}
-
-struct server *server_init(int port)
-{
-	struct server *svr = calloc(1, sizeof *svr);
-	if (svr == NULL)
-		die("calloc");
-
-	svr->epfd = epoll_create1(0);
-	if (svr->epfd == -1) {
-		free(svr);
-		die("epoll_create1");
-	}
-
-	svr->listen = create_listen(port);
-
-	struct epoll_event ev = {0};
-	ev.events = EPOLLIN;
-	ev.data.fd = svr->listen;
-
-	if (epoll_ctl(svr->epfd, EPOLL_CTL_ADD, svr->listen, &ev) == -1) {
-		server_stop(svr);
-		die("epoll_ctl");
-	}
-	return svr;
-}
-
-static void parse_message(const uint8_t *buf, size_t len,
-			const struct sockaddr *client, socklen_t client_len)
-{
-	switch (buf[0]) {
-	case PKT_START:
-		handle_start((const struct pkt_start *)buf, len, client, client_len);
-		break;
-	case PKT_PAYLOAD:
-		handle_payload((const struct pkt_payload *)buf, len, client, client_len);
-		break;
-	case PKT_DONE:
-		handle_done((const struct pkt_done *)buf, len, client, client_len);
-		break;
-	default:
-		break;
-	}
-}
-
-static void server_handle(struct server *svr)
-{
-	for (;;) {
-		uint8_t buf[TWO_KB];
-		struct sockaddr_storage client;
-		socklen_t client_len = sizeof(client);
-
-		ssize_t len = recvfrom(svr->listen, buf, sizeof buf, 0, (struct sockaddr *)&client, &client_len);
-		if (len == -1) {
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
-				break;
-				
-			if (errno == EINTR)
-				continue;
-
-			server_stop(svr);
-			die("recvfrom");
-		}
-
-		if (len == 0)
-			continue;
+    case PKT_DONE:
+	const struct pkt_done *d = (const struct pkt_done *)buf;
+	int done = handle_done(d, len);
+	send_ack(ctx->sock_fd, d->transfer_id, done, client, client_len);
+	break;
 	
-		parse_message(buf, (size_t)len, (struct sockaddr *)&client, client_len);
-	}
+    default:
+	break;
+    }
 }
 
-void server_start(struct server *svr)
+static int server_handle(struct context *ctx)
 {
-	struct epoll_event events[MAX_EVENTS];
+    for (;;) {
+	uint8_t buf[TWO_KB];
+	struct sockaddr_storage client;
+	socklen_t client_len = sizeof client;
 
-	for (;;) {
-		int ready = epoll_wait(svr->epfd, events, MAX_EVENTS, -1);
-		if (ready == -1) {
-			if (errno == EINTR)
-				continue;
-			
-			server_stop(svr);
-			die("epoll_wait");
-		}
-
-		if (ready == 0)
-			continue;
-
-		for (int i = 0; i < ready; i++) {
-			if (events[i].data.fd != svr->listen)
-				continue;
-
-			if (events[i].events & EPOLLIN)
-				server_handle(svr);
-		}
+	ssize_t len = recvfrom(ctx->sock_fd, buf, sizeof buf, 0,
+			       (struct sockaddr *)&client, &client_len);
+	if (len == -1) {
+	    if (errno == EINTR)
+		continue;
+	    
+	    if (errno == EAGAIN || errno == EWOULDBLOCK)
+		break;
+	    return -1;
 	}
+
+	if (len == 0)
+	    continue;
+	
+	parse_message(ctx, buf, (size_t)len, (struct sockaddr *)&client, client_len);
+    }
+    return 0;
+}
+
+int server_start(struct context *ctx)
+{
+    struct epoll_event events[MAX_EVENTS];
+
+    for (;;) {
+	int ready = epoll_wait(ctx->epoll_fd, events, MAX_EVENTS, -1);
+	if (ready == -1) {
+	    if (errno == EINTR)
+		continue;
+	    return -1;
+	}
+
+	if (ready == 0)
+	    continue;
+
+	for (int i = 0; i < ready; i++) {
+	    uint32_t ev = events[i].events;
+	    int fd = events[i].data.fd;
+	    
+	    if (fd != ctx->sock_fd)
+		continue;
+
+	    if (ev & (EPOLLERR | EPOLLHUP))
+                return -1;
+
+	    if (ev & EPOLLIN)
+		if (server_handle(ctx) == -1)
+		    return -1;
+	}
+    }
 }
 

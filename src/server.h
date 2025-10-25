@@ -4,12 +4,8 @@
 #define MAX_EVENTS 100
 #define TWO_KB     (2 * 1024)
 
-struct server {
-	int epfd;
-	int listen;
-};
+#include "context.h"
 
-struct server *server_init(int port);
-void server_start(struct server *svr);
+int server_start(struct context *ctx);
 
 #endif /* _SERVER_H */

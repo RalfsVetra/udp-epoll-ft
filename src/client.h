@@ -3,12 +3,8 @@
 
 #define ONE_KB (1 * 1024)
 
-struct client {
-	int epfd;
-	int listen;
-};
+#include "context.h"
 
-struct client *client_init(int port);
-void client_start(struct client *clt);
+int client_start(struct context *ctx, const char *path);
 
 #endif /* _CLIENT_H */
